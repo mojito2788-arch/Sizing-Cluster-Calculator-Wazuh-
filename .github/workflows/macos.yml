@@ -1,0 +1,69 @@
+name: Build Mac app
+on:
+  workflow_dispatch:
+    inputs:
+      notarize:
+        description: 'Sign and notarize for customer distribution (requires Apple secrets)'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.label.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Calculator and bridge checks
+        run: node tests/model.cjs && node tests/bridge.cjs
+      - name: Build universal native app
+        id: build
+        run: bash scripts/build.sh
+      - name: Run native Apple Silicon smoke test
+        env:
+          APP: ${{ steps.build.outputs.app_path }}
+        run: '"$APP/Contents/MacOS/SizingStudio" --smoke-test'
+      - name: Sign and notarize
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.notarize }}
+        env:
+          APP: ${{ steps.build.outputs.app_path }}
+          ZIP: ${{ steps.build.outputs.zip_path }}
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash scripts/notarize.sh "$APP" "$ZIP"
+      - name: Label build
+        id: label
+        env:
+          NOTARIZED: ${{ github.event_name == 'workflow_dispatch' && inputs.notarize }}
+        run: |
+          if [[ "$NOTARIZED" == true ]]; then
+            echo 'name=Sizing-Studio-macOS-notarized' >> "$GITHUB_OUTPUT"
+          else
+            echo 'name=Sizing-Studio-macOS-TEST-unsigned' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.label.outputs.name }}
+          path: ${{ steps.build.outputs.zip_path }}
+          if-no-files-found: error
+          retention-days: 30
+  test-intel:
+    needs: build
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - name: Test the same universal app on Intel
+        run: |
+          ditto -x -k Sizing-Studio-macOS-universal.zip "$RUNNER_TEMP/sizing-test"
+          "$RUNNER_TEMP/sizing-test/Sizing Studio.app/Contents/MacOS/SizingStudio" --smoke-test
