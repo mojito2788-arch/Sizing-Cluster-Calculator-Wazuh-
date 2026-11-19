@@ -25,7 +25,7 @@ iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns
 # Ad-hoc signing is for testing only. It is not Developer ID signing or notarization.
 codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
-xcrun lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/SizingStudio"
+xcrun lipo "$APP/Contents/MacOS/SizingStudio" -verify_arch arm64 x86_64
 ZIP="$OUT/Sizing-Studio-macOS-universal.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 echo "Built: $APP"
